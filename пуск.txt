@@ -1,0 +1,2 @@
+cd C:\InformationTelebot
+python Information_TeleBot.py

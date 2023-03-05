@@ -1,0 +1,146 @@
+import telebot, pyowm, datetime, webbrowser, json
+import requests as req
+from datetime import date, time
+from geopy import geocoders
+from pyowm.utils import config as cfg
+bot = telebot.TeleBot("2049763311:AAE_Hag8ynuKvsEWiBijXAh_2gMxVMN6uu0")
+my_user_id = [164594856]
+bot_user_id = [2049763311] # user_bot_reference = "http://t.me/Information1587720bot"
+owm = pyowm.OWM('fddfda5827012a5f639e3ed88bf5c07f')
+ya_token = 'b31b6d84-0d3f-4f6f-be55-fd8db6eba323'
+config = cfg.get_default_config()
+config['language'] = 'ru'
+#@bot.message_handler(commands=['start'])
+#def start(message):
+ #   bot.reply_to(message.chat.id, 'Приветствую, я - информационный бот. Отправь мне название города, сообщу текущую погоду.')
+def geo_pos(city: str):
+    geolocator = geocoders.Nominatim(user_agent="telebot")
+    latitude = str(geolocator.geocode(city).latitude)
+    longitude = str(geolocator.geocode(city).longitude)
+    return latitude, longitude
+
+def yandex_weather(latitude, longitude, ya_token: str):
+    url_yandex = f'https://api.weather.yandex.ru/v2/informers/?lat={latitude}&lon={longitude}&[lang=ru_RU]'
+    yandex_req = req.get(url_yandex, headers={'X-Yandex-API-Key': ya_token}, verify=False)
+    conditions = {'clear': 'ясно', 'partly-cloudy': 'малооблачно', 'cloudy': 'облачно с прояснениями',
+                  'overcast': 'пасмурно', 'drizzle': 'морось', 'light-rain': 'небольшой дождь',
+                  'rain': 'дождь', 'moderate-rain': 'умеренно сильный', 'heavy-rain': 'сильный дождь',
+                  'continuous-heavy-rain': 'длительный сильный дождь', 'showers': 'ливень',
+                  'wet-snow': 'дождь со снегом', 'light-snow': 'небольшой снег', 'snow': 'снег',
+                  'snow-showers': 'снегопад', 'hail': 'град', 'thunderstorm': 'гроза',
+                  'thunderstorm-with-rain': 'дождь с грозой', 'thunderstorm-with-hail': 'гроза с градом'
+                  }
+    wind_dir = {'nw': 'северо-западное', 'n': 'северное', 'ne': 'северо-восточное', 'e': 'восточное',
+                'se': 'юго-восточное', 's': 'южное', 'sw': 'юго-западное', 'w': 'западное', 'с': 'штиль'}
+
+    yandex_json = json.loads(yandex_req.text)
+    yandex_json['fact']['condition'] = conditions[yandex_json['fact']['condition']]
+    yandex_json['fact']['wind_dir'] = wind_dir[yandex_json['fact']['wind_dir']]
+    for parts in yandex_json['forecast']['parts']:
+        parts['condition'] = conditions[parts['condition']]
+        parts['wind_dir'] = wind_dir[parts['wind_dir']]
+
+    pogoda = dict()
+    params = ['condition', 'wind_dir', 'pressure_mm', 'humidity']
+    for parts in yandex_json['forecast']['parts']:
+        pogoda[parts['part_name']] = dict()
+        pogoda[parts['part_name']]['temp'] = parts['temp_avg']
+        for param in params:
+            pogoda[parts['part_name']][param] = parts[param]
+
+    pogoda['fact'] = dict()
+    pogoda['fact']['temp'] = yandex_json['fact']['temp']
+    for param in params:
+        pogoda['fact'][param] = yandex_json['fact'][param]
+
+    pogoda['link'] = yandex_json['info']['url']
+    return pogoda
+
+def print_yandex_weather(dict_weather_yandex, message):
+    day = {'night': 'ночью', 'morning': 'утром', 'day': 'днем', 'evening': 'вечером', 'fact': 'сейчас'}
+    bot.send_message(message.from_user.id, f'А яндекс говорит:')
+    for i in dict_weather_yandex.keys():
+        if i != 'link':
+            time_day = day[i]
+            bot.send_message(message.from_user.id, f'Температура {time_day} {dict_weather_yandex[i]["temp"]}'
+                                                   f', на небе {dict_weather_yandex[i]["condition"]}')
+
+    bot.send_message(message.from_user.id, f' А здесь ссылка на подробности '
+                                           f'{dict_weather_yandex["link"]}')
+
+
+def big_weather(message, city):
+    latitude, longitude = geo_pos(city)
+    yandex_weather_x = yandex_weather(latitude, longitude, ya_token)
+    print_yandex_weather(yandex_weather_x, message)
+
+def add_city(message):
+    try:
+        latitude, longitude = geo_pos(message.text.lower().split('город ')[1])
+        global cities
+        cities[message.from_user.id] = message.text.lower().split('город ')[1]
+        with open('cities.json', 'w') as f:
+            f.write(json.dumps(cities))
+        return cities, 0
+    except Exception as err:
+        return cities, 1
+
+@bot.message_handler(command=['start', 'help'])
+def send_welcome(message):
+    bot.reply_to(message, f'Я погодабот, приятно познакомитсья, {message.from_user.first_name}')
+
+@bot.message_handler(content_types=['text'])
+def get_text_messages(message):
+    global cities
+    if message.text.lower() == 'привет' or message.text.lower() == 'здорова':
+        bot.send_message(message.from_user.id,
+                         f'О великий и могучий {message.from_user.first_name}! Позвольте Я доложу '
+                         f' Вам о погоде! Напишите  слово "погода" и я напишу погоду в Вашем'
+                         f' "стандартном" городе или напишите название города в котором Вы сейчас')
+    elif message.text.lower() == 'погода':
+        if message.from_user.id in cities.keys():
+            city = cities[message.from_user.id]
+            bot.send_message(message.from_user.id, f'О великий и могучий {message.from_user.first_name}!'
+                                                   f' Твой город {city}')
+            big_weather(message, city)
+
+        else:
+            bot.send_message(message.from_user.id, f'О великий и могучий {message.from_user.first_name}!'
+                                                   f' Я не знаю Ваш город! Просто напиши:'
+                                                   f'"Мой город *****" и я запомню твой стандартный город!')
+    elif message.text.lower()[:9] == 'мой город':
+        cities, flag = add_city(message)
+        if flag == 0:
+            bot.send_message(message.from_user.id, f'О великий и могучий {message.from_user.first_name}!'
+                                                   f' Теперь я знаю Ваш город! это'
+                                                   f' {cities[str(message.from_user.id)]}')
+        else:
+            bot.send_message(message.from_user.id, f'О великий и могучий {message.from_user.first_name}!'
+                                                   f' Что то пошло не так :(')
+    else:
+        city = message.text
+        bot.send_message(message.from_user.id, f'Привет {message.from_user.first_name}! Твой город {city}')
+        big_weather(message, city)
+
+
+def helper_my(message):
+    if message.text == '/772077':
+        ref_1 = webbrowser.open("C:\Program Files\DBeaver\dbeaver.exe")
+        ref_2 = webbrowser.open("C:\Program Files (x86)\Fortinet\FortiClient\FortiClient.exe")
+        ref_3 = webbrowser.open(r"C:\Program Files\JetBrains\PyCharm Community Edition 2021.1.2\bin\pycharm64.exe")
+        ref_4 = webbrowser.open(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe")
+        ref_5 = webbrowser.open(r"C:\Users\Сенников Виталий\Desktop\образец777.xlsx")
+        ref_6 = webbrowser.open(r"C:\Users\Сенников Виталий\Desktop\Шаблон подключения.txt")
+        answer_1 = ref_1, ref_2, ref_3, ref_4, ref_5, ref_6
+        bot.send_message(message, answer_1)
+    else:
+        bot.send_message(message.chat.id, 'У Вас нет прав запуска.')
+
+
+with open('cities.json.txt', encoding='utf-8') as f:
+    cities = json.load(f)
+
+bot.polling(none_stop=True, interval = 0)
+
+
+
